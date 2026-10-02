@@ -3,11 +3,12 @@
 [skyzh/tiny-llm](https://github.com/skyzh/tiny-llm)（面向系统工程师的 LLM 推理系统课程）的个人实践实现。
 
 - **课程与教程正体**：<https://github.com/skyzh/tiny-llm>。本仓库不是 fork：包含课程 starter 包 `src/tiny_llm/` 的个人实现，以及 Week 1 的课程测试（`tests/`，取自上游）。
+- **进度**：Week 1（Day 1–7）已完成 ✅；Week 2–4 未开始。
 - **骨架版本**：对应上游提交 `da3e841`。
 - **提交历史**：按课程 task 逐个推进（Day 2 的 traditional / non-traditional 合并为一个 commit）。
 - **更新时间**：2026-10-02。
 
-## 完成度（Week 1）
+## 完成度（Week 1 ✅）
 
 | 天 | Task | 内容 | 状态 |
 | --- | --- | --- | --- |
@@ -21,11 +22,12 @@
 | Day 4 | Task 2 | SiLU、Qwen3 MLP | ✅ |
 | Day 5 | Task 1 | Qwen3TransformerBlock | ✅ |
 | Day 5 | Task 2 | Embedding（lookup / as_linear） | ✅ |
-| Day 5 | Task 3 | Qwen3ModelWeek1（端到端跑通 0.6B） | 🚧 进行中 |
+| Day 5 | Task 3 | Qwen3ModelWeek1（端到端跑通 Qwen3-0.6B） | ✅ |
+| Day 6 | Task 1 | 生成循环（simple_generate：prefill/decode、EOS、流式输出） | ✅ |
+| Day 7 | Task 1 | 采样器（make_sampler：temperature / top-k / top-p） | ✅ |
 
-- Week 2–4：未开始。
-- Day 5 Task 3 的实现还在本地进行中，本仓库暂未包含半成品代码。
-- 验证口径：day1 44 例、day2 32 例、day3 84 例、day4 44 例、day5 task1/2 26 例，共 230 例全绿（task3 需下载 Qwen3-0.6B 模型，未运行）。
+- **Week 1 完成（Day 1–7）**；Week 2–4 未开始。
+- 验证口径：day1 44 例、day2 32 例、day3 84 例、day4 44 例、day5 27 例（另有 2 例 4B / 1.7B 模型用例未下载自动 skip）、day6 7 例、day7 10 例，共 **248 例全绿**。
 
 ## 前置条件
 
@@ -38,6 +40,8 @@
 | 网络与磁盘 | 首次装依赖；Day 5 的模型用例需下载 Qwen3-0.6B（约 0.4 GB） | 见下文"模型依赖" |
 
 ## 如何运行测试
+
+本仓库自带 Week 1（Day 1–7）的课程测试，可在仓库根目录直接运行。
 
 ### 1. 安装依赖
 
