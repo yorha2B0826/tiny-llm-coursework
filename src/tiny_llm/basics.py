@@ -19,4 +19,6 @@ def linear(
 
 
 def silu(x: mx.array) -> mx.array:
-    pass
+    z = mx.exp(-mx.abs(x))
+    sigmoid = mx.where(x < 0, z / (1 + z), 1 / (1 + z))
+    return x * sigmoid
