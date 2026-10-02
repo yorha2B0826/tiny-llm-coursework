@@ -5,7 +5,7 @@ description = "Week 1 实践代码与测试（tiny-llm 课程）"
 requires-python = ">=3.10, <3.13"
 dependencies = [
     "mlx>=0.32.0",
-    "mlx-lm>=0.31.3",
+    "mlx-lm==0.31.3",
     "numpy>=2.2.4",
     "pytest>=8.3.5",
     "huggingface-hub",
