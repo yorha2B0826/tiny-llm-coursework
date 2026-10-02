@@ -27,26 +27,34 @@
 - Day 5 Task 3 的实现还在本地进行中，本仓库暂未包含半成品代码。
 - 验证口径：day1 44 例、day2 32 例、day3 84 例、day4 44 例、day5 task1/2 26 例，共 230 例全绿（task3 需下载 Qwen3-0.6B 模型，未运行）。
 
+## 前置条件
+
+| 项 | 要求 | 说明 |
+| --- | --- | --- |
+| 平台 | macOS + Apple Silicon（M1 及以上） | MLX 只支持 Apple silicon |
+| Python | 3.10–3.12（已用 `.python-version` 固定为 3.11） | 无需手动安装，uv 会自动下载/选用 |
+| [uv](https://docs.astral.sh/uv/) | 最新版 | 安装：`brew install uv`，或 `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Xcode 与 Metal 工具链 | 完整 Xcode + Metal 编译器 + CMake ≥ 3.27 | **Week 2+ 构建课程原生扩展时需要**（见[课程 setup](https://github.com/skyzh/tiny-llm/blob/main/book/src/setup.md)与 Week 1 Day 7 的工具链检查）；本仓库的 Week 1 测试无需构建扩展，但建议提前装好 |
+| 网络与磁盘 | 首次装依赖；Day 5 的模型用例需下载 Qwen3-0.6B（约 0.4 GB） | 见下文"模型依赖" |
+
 ## 如何运行测试
 
-本仓库自带 Week 1（Day 1–Day 5）的课程测试，可在仓库根目录直接运行。
-
-### 1. 准备环境（Python 3.10–3.12，macOS / Apple Silicon）
+### 1. 安装依赖
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync          # 按 pyproject.toml + uv.lock 创建 .venv 并安装全部依赖
 ```
 
 ### 2. 运行
 
 ```bash
-pytest                                       # 全部
-pytest tests/test_week_1_day_1.py            # 跑某一天
-pytest tests/test_week_1_day_1.py tests/test_week_1_day_4.py   # 跑多天
-pytest tests/test_week_1_day_4.py -k task_1  # 只跑某个 task
+uv run pytest                                        # 全部
+uv run pytest tests/test_week_1_day_1.py             # 跑某一天
+uv run pytest tests/test_week_1_day_1.py tests/test_week_1_day_4.py   # 跑多天
+uv run pytest tests/test_week_1_day_4.py -k task_1   # 只跑某个 task
 ```
+
+（也可以 `source .venv/bin/activate` 激活环境后直接用 `pytest`。）
 
 ### 3. 说明
 
@@ -54,12 +62,12 @@ pytest tests/test_week_1_day_4.py -k task_1  # 只跑某个 task
 - **模型依赖**：Day 5 的 task2（部分用例）与 task3 需要本地已缓存 Qwen3-0.6B；未缓存时对应用例会失败并提示下载命令：
 
   ```bash
-  hf download Qwen/Qwen3-0.6B-MLX-4bit
+  uv run hf download Qwen/Qwen3-0.6B-MLX-4bit
   ```
 
   4B / 1.7B 模型用例在其未下载时自动跳过（skip）。
 - **扩展依赖**：本仓库不含课程 C++/Metal 扩展（Week 2+ 才需要）。`tests/conftest.py` 会在扩展缺失时注册占位模块，Week 1 测试不受影响；真正调用扩展算子时会给出明确报错。
-- 也可以回到完整课程仓库工作：用本仓库的 `src/tiny_llm/` 覆盖上游同名目录后，用 `pdm run test --week 1 --day N` 跑同一批测试。
+- 也可以回到完整课程仓库工作：用本仓库的 `src/tiny_llm/` 覆盖上游同名目录后，按[课程 setup](https://github.com/skyzh/tiny-llm/blob/main/book/src/setup.md) 用 `pdm run test --week 1 --day N` 跑同一批测试。
 
 ## 备注
 
