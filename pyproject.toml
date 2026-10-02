@@ -1,5 +1,19 @@
-# 本文件只提供 pytest 配置（本仓库不是可安装的 Python 包）。
-# 依赖安装见 requirements.txt。
+[project]
+name = "tiny-llm-coursework"
+version = "0.1.0"
+description = "Week 1 实践代码与测试（tiny-llm 课程）"
+requires-python = ">=3.10, <3.13"
+dependencies = [
+    "mlx>=0.32.0",
+    "mlx-lm>=0.31.3",
+    "numpy>=2.2.4",
+    "pytest>=8.3.5",
+    "huggingface-hub",
+]
+
+# 本仓库不是可安装的 Python 包：uv 只负责创建环境、安装依赖
+[tool.uv]
+package = false
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
