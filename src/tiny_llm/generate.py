@@ -20,7 +20,66 @@ def simple_generate(
     max_tokens: int = 256,
 ) -> None:
     def _step(model, y):
-        pass
+        x = y[None, :]
+        output_logits = model(x)
+        logits = output_logits[:, -1, :]
+        log_probs = logits - mx.logsumexp(
+            logits,
+            axis=-1,
+            keepdims=True
+        )
+
+        if sampler is None:
+            next_token = mx.argmax(
+                log_probs,
+                axis=-1,
+            )
+        else:
+            next_token = sampler(log_probs)
+        return next_token
+    token_ids = tokenizer.encode(
+        prompt,
+        add_special_tokens=False,
+    )
+
+    if len(token_ids) == 0:
+        raise ValueError("empty token sequence")
+
+    y = mx.array(token_ids)
+
+    detokenizer = tokenizer.detokenizer
+    detokenizer.reset()
+
+    for _ in range(max_tokens):
+        next_token = _step(model, y)
+
+        token_id = int(next_token.item())
+
+        if token_id == tokenizer.eos_token_id:
+            break
+
+        detokenizer.add_token(token_id)
+
+        print(
+            detokenizer.last_segment,
+            end="",
+            flush=True
+        )
+
+        y=mx.concatenate(
+            [y, next_token],
+            axis=0
+        )
+
+    detokenizer.finalize()
+
+    print(
+        detokenizer.last_segment,
+        end="",
+        flush=True
+    )
+
+        
 
 
 def simple_generate_with_kv_cache(
