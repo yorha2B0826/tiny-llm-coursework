@@ -1,0 +1,6 @@
+# 本文件只提供 pytest 配置（本仓库不是可安装的 Python 包）。
+# 依赖安装见 requirements.txt。
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["src", "."]

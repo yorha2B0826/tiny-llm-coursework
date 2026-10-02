@@ -1,0 +1,6 @@
+# Week 1 测试所需的运行依赖（下限与课程上游保持一致）
+mlx>=0.32.0
+mlx-lm>=0.31.3
+numpy>=2.2.4
+pytest>=8.3.5
+huggingface-hub
