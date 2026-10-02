@@ -82,8 +82,65 @@ def scaled_dot_product_attention_grouped(
     scale: float | None = None,
     mask: mx.array | str | None = None,
 ) -> mx.array:
-    pass
+    H_q = query.shape[-3]
+    L = query.shape[-2]
+    D = query.shape[-1]
 
+    H = key.shape[-3]
+    S = key.shape[-2]
+
+    if H_q % H != 0:
+        raise ValueError("query heads must be divisible by key/value heads")
+    n_repeats = H_q // H
+    if scale is None:
+        scale = 1 / (D ** 0.5)
+
+    batch_shape = query.shape[:-3]
+    q = query.reshape(
+        *batch_shape,
+        H,
+        n_repeats,
+        L,
+        D
+    )
+
+    k = key.reshape(
+        *batch_shape,
+        H,
+        1,
+        S,
+        D
+    )
+
+    v = value.reshape(
+        *batch_shape,
+        H,
+        1,
+        S,
+        D
+    )
+    scores = q @ k.swapaxes(-1, -2)
+    scores = scores * scale
+
+    if mask is not None:
+        m = mask.reshape(
+            *batch_shape,
+            H,
+            n_repeats,
+            L,
+            S
+        )
+        scores += m
+    weights = softmax(scores, axis=-1)
+    output = weights @ v
+    output = output.reshape(
+        *batch_shape,
+        H_q,
+        L,
+        D
+    )
+
+    return output
 
 def paged_attention(
     query: mx.array,
