@@ -77,3 +77,4 @@ uv run pytest tests/test_week_1_day_4.py -k task_1   # 只跑某个 task
 
 - 提交历史为按 task 重建（本地开发时未逐步提交）：每个 commit 只包含该 task 的实现范围。
 - 测试文件取自课程上游仓库（`tests/`）；仅新增 `tests/conftest.py` 作为扩展缺失时的兼容层。
+- 依赖版本：`mlx-lm` 固定为 `0.31.3`（与课程环境一致）。更新的 0.32.x 中 `TokenizerWrapper` 会要求被测 tokenizer 提供 `apply_chat_template`，与课程 Day 6 测试使用的 `MinimalTokenizer` 不兼容。
