@@ -89,8 +89,88 @@ def simple_generate_with_kv_cache(
     max_tokens: int = 256,
     use_bounded_kv_capacity: bool | None = None,
 ) -> str:
+    if (
+        not isinstance(max_tokens, int)
+        or isinstance(max_tokens, bool)
+        or max_tokens < 0
+    ):
+        raise ValueError("max_tokens must be a non-negative integer")
+    if max_tokens == 0:
+        return ""
     def _step(model, y, offset, kv_cache):
-        pass
+        logits = model(
+            y[None, :],
+            offset,
+            kv_cache,
+            logits_to_keep=1
+        )
+
+        logits = logits[:, -1, :]
+
+        next_token = mx.argmax(
+            logits,
+            axis=-1
+        ).astype(mx.int32)
+
+        return next_token
+    tokens = mx.array(
+        tokenizer.encode(
+            prompt,
+            add_special_tokens=False
+        ),
+        dtype=mx.int32
+    )
+
+    if tokens.size == 0:
+        raise ValueError("prompt must encode to at least one token")
+
+    if use_bounded_kv_capacity:
+        capacity=(
+            int(tokens.size) + max_tokens
+        )
+    else:
+        capacity = None
+
+    kv_cache = model.create_kv_cache(
+        capacity=capacity
+    )
+
+    detokenizer = tokenizer.detokenizer
+    detokenizer.reset()
+
+    output_parts = []
+
+    offset = 0
+
+    try:
+        for step in range(max_tokens):
+            next_token = _step(model, tokens, offset, kv_cache)
+            mx.eval(next_token)
+
+            token_id = int(next_token.item())
+            if(token_id == tokenizer.eos_token_id):
+                break
+            detokenizer.add_token(token_id)
+            segment = detokenizer.last_segment
+            output_parts.append(segment)
+
+            print(segment, end="", flush=True)
+
+            if step + 1 == max_tokens:
+                break
+            offset += int(tokens.size)
+
+            tokens = next_token
+
+        detokenizer.finalize()
+        tail = detokenizer.last_segment
+        output_parts.append(tail)
+
+        print(tail, end="", flush=True)
+
+        return "".join(output_parts)
+    finally:
+        _release_kv_cache(kv_cache)
 
 
 def speculative_generate(
