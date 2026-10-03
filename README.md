@@ -3,12 +3,14 @@
 [skyzh/tiny-llm](https://github.com/skyzh/tiny-llm)（面向系统工程师的 LLM 推理系统课程）的个人实践实现。
 
 - **课程与教程正体**：<https://github.com/skyzh/tiny-llm>。本仓库不是 fork：包含课程 starter 包 `src/tiny_llm/` 的个人实现，以及 Week 1 的课程测试（`tests/`，取自上游）。
-- **进度**：Week 1（Day 1–7）已完成 ✅；Week 2–4 未开始。
+- **进度**：Week 1（Day 1–7）已完成 ✅；Week 2 Day 1（KV cache）已完成 ✅；Week 2 其余天与 Week 3–4 未开始。
 - **骨架版本**：对应上游提交 `da3e841`。
 - **提交历史**：按课程 task 逐个推进（Day 2 的 traditional / non-traditional 合并为一个 commit）。
 - **更新时间**：2026-10-02。
 
-## 完成度（Week 1 ✅）
+## 完成度
+
+### Week 1 ✅
 
 | 天 | Task | 内容 | 状态 |
 | --- | --- | --- | --- |
@@ -26,8 +28,21 @@
 | Day 6 | Task 1 | 生成循环（simple_generate：prefill/decode、EOS、流式输出） | ✅ |
 | Day 7 | Task 1 | 采样器（make_sampler：temperature / top-k / top-p） | ✅ |
 
-- **Week 1 完成（Day 1–7）**；Week 2–4 未开始。
-- 验证口径：day1 44 例、day2 32 例、day3 84 例、day4 44 例、day5 27 例（另有 2 例 4B / 1.7B 模型用例未下载自动 skip）、day6 7 例、day7 10 例，共 **248 例全绿**。
+- **Week 1 完成（Day 1–7）**：day1 44 例、day2 32 例、day3 84 例、day4 44 例、day5 27 例（另有 2 例 4B / 1.7B 模型用例未下载自动 skip）、day6 7 例、day7 10 例，共 **248 例全绿**。
+
+### Week 2
+
+| 天 | Task | 内容 | 状态 |
+| --- | --- | --- | --- |
+| Day 1 | Task 1 | KV cache（追加拼接路径） | ✅ |
+| Day 1 | Task 2 | 带 cache 的 Week 2 模型（offset / cache 数据流） | ✅ |
+| Day 1 | Task 3 | create_kv_cache 请求级缓存工厂 | ✅ |
+| Day 1 | Task 4 | simple_generate_with_kv_cache serving loop | ✅ |
+| Day 1 | — | capacity-cache checkpoint（定长缓冲、切片写入） | ✅ |
+| Day 1 | — | profiler 归因（capacity-cache:decode:128） | ✅ |
+| Day 2–7 | — | 尚未开始 | ⬜ |
+
+- **Week 2 Day 1 验证口径**：`pdm run test --week 2 --day 1` 6 例全绿；`tests_refsol/test_dense_kv_capacity.py` 7 例全绿；`pdm run profile-week2-kernels --case capacity-cache:decode:128` 可运行。
 
 ## 前置条件
 
@@ -77,4 +92,5 @@ uv run pytest tests/test_week_1_day_4.py -k task_1   # 只跑某个 task
 
 - 提交历史为按 task 重建（本地开发时未逐步提交）：每个 commit 只包含该 task 的实现范围。
 - 测试文件取自课程上游仓库（`tests/`）；仅新增 `tests/conftest.py` 作为扩展缺失时的兼容层。
+- 基准输出（`week2-day*-*.json`）属于本机测量结果，已加入 `.gitignore` 不入库。
 - 依赖版本：`mlx-lm` 固定为 `0.31.3`（与课程环境一致）。更新的 0.32.x 中 `TokenizerWrapper` 会要求被测 tokenizer 提供 `apply_chat_template`，与课程 Day 6 测试使用的 `MinimalTokenizer` 不兼容。
