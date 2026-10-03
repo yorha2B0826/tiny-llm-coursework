@@ -4,7 +4,13 @@ import math
 
 def softmax(x: mx.array, axis: int) -> mx.array:
     # Supplied for Day 1; a manual implementation is an optional bonus exercise.
-    return mx.softmax(x, axis=axis)
+    orginal_dtype = x.dtype
+    x = x.astype(mx.float32)
+    x_max = mx.max(x, axis=axis, keepdims=True)
+    e = mx.exp(x - x_max)
+    out = e / mx.sum(e, axis=axis, keepdims=True)
+    out = out.astype(orginal_dtype)
+    return out
 
 
 def linear(
