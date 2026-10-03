@@ -101,7 +101,14 @@ class TinyKvFullCache(TinyKvCache):
 
     def _logical_key_values(self) -> tuple[mx.array, mx.array]:
         """Return only initialized tokens, never the unused physical tail."""
-        pass
+        if self.key_values is None:
+            raise ValueError("KV cache is empty")
+
+        key_storage, value_storage = self.key_values
+        return (
+            key_storage[:, :, : self.offset, :],
+            value_storage[:, :, : self.offset, :]
+        )
 
     def update_and_fetch(
         self,
@@ -110,8 +117,25 @@ class TinyKvFullCache(TinyKvCache):
         mask_length: int | None = None,
         mask: mx.array | str | None = None,
     ) -> tuple[mx.array, mx.array, int, Optional[mx.array]]:
-
-        L_new = key.shape[-2]
+        L_new= key.shape[-2]
+        if self.uses_capacity:
+            if self.offset + L_new > self.capacity:
+                raise ValueError(
+                    f"KV capacity {self.capacity} exceeded by append ending at "
+                    f"{self.offset + L_new}"
+                ) 
+            if self.key_values is None:
+                shape = key.shape[:-2] + (self.capacity, ) + key.shape[-1:]
+                self.key_values = (mx.zeros(shape, key.dtype),
+                                   mx.zeros(shape, value.dtype))
+            if L_new:
+                start = mx.array([self.offset])
+                keys, values = self.key_values
+                self.key_values = (mx.slice_update(keys, key, start, axes=(2,)),
+                                   mx.slice_update(values, value, start, axes=(2,)))
+                self.slice_write_bytes += key.nbytes + value.nbytes
+            self.offset += L_new
+            return (*self._logical_key_values(), self.offset, mask)
         if self.key_values is None:
             self.key_values = (key, value)
         else:
@@ -130,11 +154,27 @@ class TinyKvFullCache(TinyKvCache):
         return key, value, self.offset, mask
 
     def materialize(self):
-        pass
+        if self.key_values is not None:
+            mx.eval(*self.key_values)
 
     def reset(self):
         """Reset logical length while retaining bounded physical storage."""
-        pass
+        self.offset = 0
+        if not self.uses_capacity:
+            self.key_values = None
 
     def rewind(self, n: int):
-        pass
+        if not 0 <= n <= self.offset:
+            raise ValueError("invalid rewind")
+
+        self.offset -= n
+        if self.uses_capacity:
+            return
+        if self.offset == 0:
+            self.key_values = None
+        else:
+            key, value = self.key_values
+            self.key_values = (
+                key[:, :, :self.offset],
+                value[:, :, :self.offset]
+            )

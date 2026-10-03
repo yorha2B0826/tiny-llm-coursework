@@ -412,9 +412,13 @@ class Qwen3ModelWeek2:
     def create_kv_cache(self, capacity: int | None = None) -> list[TinyKvCache]:
         from .kv_cache import TinyKvFullCache
 
-        return [
-            TinyKvFullCache(capacity=capacity)
-            for _ in range(self.num_hidden_layers)
+        return[
+            TinyKvFullCache(
+                capacity=capacity
+            )
+            for _ in range(
+                self.num_hidden_layers
+            )
         ]
 
     def __call__(
@@ -424,4 +428,29 @@ class Qwen3ModelWeek2:
         cache: list[TinyKvCache],
         logits_to_keep: int | None = None,
     ) -> mx.array:
-        pass
+
+        for layer, layer_cache in enumerate(cache):
+            if layer_cache.offset != offset:
+                raise ValueError(
+                    f"layer {layer} cache offset {layer_cache.offset}"
+                    f"does not match model offset {offset}"
+                )
+        h = self.embedding(inputs)
+        mask = None if inputs.shape[1] == 1 else "causal"
+
+        for i in range(self.num_hidden_layers):
+            h = self.layers_inner[i](
+                h,
+                offset,
+                cache[i],
+                mask=mask,
+            )
+        if logits_to_keep is not None:
+            h = h[:, -logits_to_keep:, :]
+
+        h = self.norm(h)
+
+        if self.w_lm_head is not None:
+            return linear(h, self.w_lm_head)
+        return self.embedding.as_linear(h)
+        
