@@ -1,0 +1,349 @@
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Optional
+
+from .attention import causal_mask
+import mlx.core as mx
+
+if TYPE_CHECKING:
+    from .paged_kv_cache import PagedKvMetadata
+
+
+class TinyKvCache(ABC):
+    @abstractmethod
+    def update_and_fetch(
+        self,
+        key: mx.array,
+        value: mx.array,
+        mask_length: int | None = None,
+        mask: mx.array | str | None = None,
+    ) -> tuple[mx.array, mx.array, int, Optional[mx.array]]:
+        """
+        Update the key-value cache and fetch the updated key-value cache.
+
+        Args:
+            key: The key to update the cache with.
+            value: The value to update the cache with.
+            mask_length: The length of the mask (only used in batching mode)
+            mask: The mask to use (only used in batching mode)
+
+        Returns:
+            A tuple of the updated key-value cache, the updated value, the sequence length, and the mask.
+        """
+
+    def release(self):
+        """
+        Release all resources owned by this cache.
+
+        Request-scoped caches use this when generation finishes or a batch slot
+        is removed. Dense caches do not own shared resources, while paged caches
+        return their physical pages to a shared pool.
+        """
+        return None
+
+    def materialize(self):
+        """Evaluate owned K/V storage without changing its logical layout."""
+        return None
+
+    def update_and_fetch_paged(
+        self,
+        key: mx.array,
+        value: mx.array,
+        mask_length: int | None = None,
+        mask: mx.array | str | None = None,
+    ) -> "PagedKvMetadata":
+        """
+        Update this cache and return paged attention metadata.
+
+        Week 3 caches override this. Dense caches intentionally do not provide
+        paged metadata, so calling this on them is a programming error.
+        """
+        raise NotImplementedError("This KV cache does not support paged attention")
+
+    def rewind(self, n: int):
+        """
+        Remove the newest n logical tokens from this cache.
+
+        This is needed by speculative decoding when some draft tokens are
+        rejected after their K/V has already been written. Implementations may
+        drop dense suffixes or return whole pages to a page pool.
+        """
+        raise NotImplementedError("This KV cache does not support rewind")
+
+
+class BatchingKvCache(TinyKvCache):
+    def __init__(self, max_active_requests: int, max_seq_len: int | None = None):
+        self.max_active_requests = max_active_requests
+        self.max_seq_len = max_seq_len
+        self.kv_caches: list[TinyKvCache] = [None] * max_active_requests
+        self.HD = None
+        self.last_batch_bytes = 0
+        self.staging_copy_bytes = 0
+
+    def update_and_fetch(
+        self,
+        keys: mx.array,
+        values: mx.array,
+        mask_length: int | None = None,
+        mask: mx.array | str | None = None,
+    ) -> tuple[mx.array, mx.array, int, Optional[mx.array]]:
+        B, H, S, D = keys.shape
+        assert keys.shape == values.shape
+        if self.max_seq_len is not None:
+            assert S <= self.max_seq_len
+        if self.HD is None:
+            self.HD = (H, D)
+        else:
+            assert self.HD == (H, D), f"expect {self.HD} but got {H, D}"
+        assert B == self.max_active_requests
+        # Step 1: append each active row into its request cache. This method
+        # preserves the legacy dense batch interface for Week 3 Day 1 callers.
+        data = []
+        for b in range(B):
+            if self.kv_caches[b] is None:
+                data.append(None)
+                continue
+            key, value = keys[b : b + 1], values[b : b + 1]
+            new_key, new_value, seq_len, mask = self.kv_caches[b].update_and_fetch(
+                key, value
+            )
+            data.append((new_key[0], new_value[0], seq_len, mask))
+
+        # Step 2: compute seq_len of this batch
+        def get_seq_len(data):
+            if data is None:
+                return 0
+            _, _, seq_len, _ = data
+            return seq_len
+
+        seq_len = max(map(get_seq_len, data))
+        # Step 3: rebuild one dense batch tensor. True paged attention will
+        # replace this with block_table/context_lens metadata.
+        keys = mx.zeros((self.max_active_requests, H, seq_len, D), dtype=key.dtype)
+        values = mx.zeros((self.max_active_requests, H, seq_len, D), dtype=value.dtype)
+        masks = mx.full(
+            (self.max_active_requests, mask_length, seq_len), -mx.inf, dtype=key.dtype
+        )
+        for b in range(B):
+            if data[b] is None:
+                continue
+            key, value, S, mask = data[b]
+            self.staging_copy_bytes += key.nbytes + value.nbytes
+            keys[b, :, seq_len - S : seq_len, :] = key
+            values[b, :, seq_len - S : seq_len, :] = value
+            if mask is None or mask == "causal":
+                masks[b, :, seq_len - S : seq_len] = causal_mask(
+                    mask_length, S, dtype=key.dtype
+                )
+            elif isinstance(mask, mx.array):
+                masks[b, :, seq_len - S : seq_len] = mask
+            else:
+                raise NotImplementedError
+        self.last_batch_bytes = keys.nbytes + values.nbytes
+        return keys, values, None, masks.reshape(B, 1, mask_length, seq_len)
+
+    def update_and_fetch_paged(
+        self,
+        keys: mx.array,
+        values: mx.array,
+        mask_length: int | None = None,
+        mask: mx.array | str | None = None,
+    ) -> "PagedKvMetadata":
+        from .paged_kv_cache import PagedKvMetadata, TinyKvPagedCache
+
+        if len(keys.shape) != 4 or len(values.shape) != 4:
+            raise ValueError("Batched K/V chunks must be 4D [B, H, S, D]")
+        if keys.shape != values.shape:
+            raise ValueError("Batched K/V chunks must have the same shape")
+        B, H, S, D = keys.shape
+        if B != self.max_active_requests:
+            raise ValueError(f"Expected batch size {self.max_active_requests}, got {B}")
+        if self.HD is not None and self.HD != (H, D):
+            raise ValueError(f"expect {self.HD} but got {H, D}")
+
+        # Validate the complete active set before any request or allocator is
+        # mutated. In particular, mixed pools must fail before row zero appends.
+        pool = None
+        active_caches = []
+        for b in range(B):
+            cache = self.kv_caches[b]
+            if cache is None:
+                continue
+            if not isinstance(cache, TinyKvPagedCache):
+                raise ValueError("BatchingKvCache contains a non-paged request cache")
+            if pool is None:
+                pool = cache.pool
+            elif pool is not cache.pool:
+                raise ValueError("Paged batch caches must share one page pool")
+            if self.max_seq_len is not None and cache.offset + S > self.max_seq_len:
+                raise ValueError("Paged batch append exceeds max_seq_len")
+            cache.validate_append(keys[b : b + 1], values[b : b + 1])
+            active_caches.append((b, cache))
+
+        if pool is None:
+            raise ValueError("Cannot build paged metadata without active requests")
+
+        pool_state = pool._snapshot_state()
+        cache_states = [(cache, cache._snapshot_state()) for _, cache in active_caches]
+        old_hd = self.HD
+        context_lens = [0] * B
+        max_pages = 0
+        try:
+            for b, cache in active_caches:
+                cache.update_and_fetch_paged(
+                    keys[b : b + 1],
+                    values[b : b + 1],
+                    mask_length=mask_length,
+                    mask=mask,
+                )
+                context_lens[b] = cache.offset
+                max_pages = max(max_pages, cache.num_pages)
+            self.HD = (H, D)
+        except Exception:
+            pool._restore_state(pool_state)
+            for cache, state in cache_states:
+                cache._restore_state(state)
+            self.HD = old_hd
+            raise
+
+        self.last_batch_bytes = 0
+
+        rows = []
+        for cache in self.kv_caches:
+            if cache is None:
+                rows.append([-1] * max_pages)
+            else:
+                rows.append(cache.page_ids + [-1] * (max_pages - cache.num_pages))
+
+        return PagedKvMetadata(
+            key_pages=pool.key_pages,
+            value_pages=pool.value_pages,
+            block_table=mx.array(rows, dtype=mx.int32),
+            context_lens=mx.array(context_lens, dtype=mx.int32),
+            page_size=pool.page_size,
+            mask=mask,
+        )
+
+    def add_request(self, prefilled: TinyKvCache, id: int):
+        if id >= self.max_active_requests:
+            raise ValueError(f"Request id {id} is out of range")
+        if isinstance(prefilled, TinyKvFullCache) and prefilled.key_values is not None:
+            keys, _ = prefilled.key_values
+            B, H, _, D = keys.shape
+            assert B == 1
+            if self.HD is None:
+                self.HD = (H, D)
+            else:
+                assert self.HD == (H, D)
+        self.kv_caches[id] = prefilled
+
+    def remove_request(self, id: int):
+        if self.kv_caches[id] is None:
+            raise ValueError(f"Request id {id} is not in the cache")
+        self.kv_caches[id].release()
+        self.kv_caches[id] = None
+
+
+class TinyKvFullCache(TinyKvCache):
+    def __init__(self, capacity: int | None = None):
+        if capacity is not None and (
+            not isinstance(capacity, int) or isinstance(capacity, bool) or capacity < 0
+        ):
+            raise ValueError("capacity must be a non-negative integer or None")
+        self.key_values = None
+        self.offset = 0
+        self.capacity = capacity
+        self.logical_copy_bytes = 0
+        self.physical_growth_copy_bytes = 0
+        self.slice_write_bytes = 0
+        self.growth_copy_bytes = 0
+
+    @property
+    def uses_capacity(self) -> bool:
+        return self.capacity is not None
+
+    def _logical_key_values(self) -> tuple[mx.array, mx.array]:
+        keys, values = self.key_values
+        return keys[:, :, : self.offset], values[:, :, : self.offset]
+
+    def update_and_fetch(
+        self,
+        key: mx.array,
+        value: mx.array,
+        mask_length: int | None = None,
+        mask: mx.array | str | None = None,
+    ) -> tuple[mx.array, mx.array, int, Optional[mx.array]]:
+        assert key.shape == value.shape
+        B, H, S, D = key.shape
+        if self.uses_capacity:
+            end = self.offset + S
+            if end > self.capacity:
+                raise ValueError(
+                    f"KV cache capacity {self.capacity} exceeded by append ending at {end}"
+                )
+            if self.key_values is None:
+                assert self.offset == 0
+                keys = mx.zeros((B, H, self.capacity, D), dtype=key.dtype)
+                values = mx.zeros((B, H, self.capacity, D), dtype=value.dtype)
+                self.key_values = (keys, values)
+            else:
+                keys, values = self.key_values
+                assert keys.shape == (B, H, self.capacity, D)
+                assert values.shape == (B, H, self.capacity, D)
+                assert keys.dtype == key.dtype
+                assert values.dtype == value.dtype
+            if S:
+                keys, values = self.key_values
+                start = mx.array([self.offset])
+                keys = mx.slice_update(keys, key, start_indices=start, axes=(2,))
+                values = mx.slice_update(values, value, start_indices=start, axes=(2,))
+                self.key_values = (keys, values)
+                self.slice_write_bytes += key.nbytes + value.nbytes
+            self.offset = end
+            logical_keys, logical_values = self._logical_key_values()
+            return logical_keys, logical_values, self.offset, mask
+
+        if self.key_values is None:
+            assert self.offset == 0
+            self.key_values = (key, value)
+            self.offset = S
+            return key, value, self.offset, mask
+        else:
+            prev_keys, prev_values = self.key_values
+            assert prev_keys.shape == (B, H, self.offset, D)
+            assert prev_values.shape == (B, H, self.offset, D)
+            copied_bytes = prev_keys.nbytes + prev_values.nbytes
+            self.logical_copy_bytes += copied_bytes
+            self.physical_growth_copy_bytes += copied_bytes
+            self.growth_copy_bytes += copied_bytes
+            new_keys = mx.concat([prev_keys, key], axis=2)
+            new_values = mx.concat([prev_values, value], axis=2)
+            self.key_values = (new_keys, new_values)
+            self.offset += S
+            return new_keys, new_values, self.offset, mask
+
+    def materialize(self):
+        if self.key_values is not None:
+            mx.eval(*self.key_values)
+
+    def reset(self):
+        """Reset the logical request while retaining bounded physical storage."""
+        self.offset = 0
+        if not self.uses_capacity:
+            self.key_values = None
+
+    def rewind(self, n: int):
+        if not isinstance(n, int) or isinstance(n, bool) or not 0 <= n <= self.offset:
+            raise ValueError("rewind length must be between zero and the cache length")
+        if n == 0:
+            return
+        self.offset -= n
+        if self.offset == 0:
+            if not self.uses_capacity:
+                self.key_values = None
+            return
+        if self.uses_capacity:
+            return
+        self.key_values = (
+            self.key_values[0][:, :, : self.offset],
+            self.key_values[1][:, :, : self.offset],
+        )
